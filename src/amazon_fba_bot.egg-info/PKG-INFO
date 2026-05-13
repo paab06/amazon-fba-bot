@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: amazon-fba-bot
+Version: 0.1.0
+Requires-Python: >=3.11
+Requires-Dist: aiohttp>=3.9
+Requires-Dist: aiofiles>=23.0
+Requires-Dist: aioredis>=2.0
+Requires-Dist: asyncpg>=0.29
+Requires-Dist: gspread-asyncio>=1.9
+Requires-Dist: google-auth>=2.0
+Requires-Dist: pydantic-settings>=2.0
+Requires-Dist: structlog>=24.0
+Requires-Dist: tenacity>=8.2
+Requires-Dist: tqdm>=4.66
