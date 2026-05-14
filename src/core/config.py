@@ -9,10 +9,11 @@ class Settings(BaseSettings):
     Carga automáticamente desde .env en la raíz del proyecto.
     """
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-    )
+    env_file=".env",
+    env_file_encoding="utf-8",
+    case_sensitive=False,
+    extra="ignore",       # ← añadir esta línea
+)
 
     # ── SP-API credentials ─────────────────────────────────────────
     sp_api_refresh_token: SecretStr = Field(..., description="LWA Refresh Token")
@@ -21,6 +22,7 @@ class Settings(BaseSettings):
     sp_api_marketplace_id: str      = Field("A1RKKUPIHCS9HS", description="ES=A1RKKUPIHCS9HS")
     sp_api_region: str              = Field("eu-west-1")
     sp_api_endpoint: str            = Field("https://sellingpartnerapi-eu.amazon.com")
+    sp_api_seller_id: str           = Field(..., description="Tu Seller ID de Amazon (ej: A1SELLER123XYZ)")
 
     # ── AWS credentials (para firmar peticiones SigV4) ─────────────
     aws_access_key_id: SecretStr     = Field(...)

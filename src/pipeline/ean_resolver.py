@@ -19,7 +19,7 @@ from dataclasses import dataclass, field, asdict
 from typing import Optional
 
 import structlog
-from aioredis import Redis
+from redis.asyncio import Redis
 
 from src.api.sp_api_client import SPAPIClient
 from src.core.exceptions import SPAPINotFoundError

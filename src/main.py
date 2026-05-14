@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-import aioredis
+import redis.asyncio as aioredis
 import structlog
 from tqdm.asyncio import tqdm
 
