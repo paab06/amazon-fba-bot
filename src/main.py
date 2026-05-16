@@ -39,6 +39,8 @@ from src.pipeline.exporter import Exporter
 from src.pipeline.financial_calc import FinancialCalculator, FinancialResult
 from src.pipeline.ingestor import ProductInput, read_csv
 from src.pipeline.shields import ShieldChain
+from src.scrapers.autonomous_crawler import AutonomousCrawler
+from src.scrapers.competitive_analyzer import CompetitiveAnalyzer
 
 log = structlog.get_logger(__name__)
 
@@ -351,5 +353,291 @@ def main() -> None:
         sys.exit(0)
 
 
-if __name__ == "__main__":
+# ══════════════════════════════════════════════════════════════════
+#  Scraper Functions — Descubrimiento de Productos
+# ══════════════════════════════════════════════════════════════════
+
+async def run_scraper_by_keywords(
+    keywords: list[str],
+    output_csv: str | Path = "data/discovered_by_keywords.csv",
+    max_results: int = 100,
+) -> Path:
+    """
+    Busca productos por keywords y genera CSV para pipeline.
+    
+    Args:
+        keywords: Términos de búsqueda (ej: ["gaming mouse", "keyboard"])
+        output_csv: Ruta de salida del CSV
+        max_results: Máximo de productos a descubrir
+        
+    Returns:
+        Path al CSV generado
+        
+    Uso:
+        csv_path = await run_scraper_by_keywords(
+            keywords=["gaming mouse", "mechanical keyboard"],
+        )
+        # Luego:
+        # stats = await run_pipeline(csv_path)
+    """
+    setup_logging("INFO")
+    
+    from src.scrapers.orchestrator import ScraperOrchestrator
+    
+    log.info("scraper.keywords.start", keywords=len(keywords))
+    
+    # Setup clients
+    sp_client = SPAPIClient()
+    keepa_client = KeepaClient()
+    redis = await aioredis.from_url(settings.redis_url)
+    
+    try:
+        orchestrator = ScraperOrchestrator(sp_client, keepa_client, redis)
+        
+        csv_path = await orchestrator.scrape_and_generate_csv(
+            keywords=keywords,
+            output_path=output_csv,
+            max_results=max_results,
+        )
+        
+        log.info("scraper.keywords.complete", csv_path=str(csv_path))
+        print(f"\n✓ CSV generado: {csv_path}")
+        
+        return csv_path
+    
+    finally:
+        await redis.close()
+
+
+async def run_scraper_analyze_competitors(
+    competitor_seller_ids: list[str],
+    output_csv: str | Path = "data/discovered_from_competitors.csv",
+) -> Path:
+    """
+    Analiza productos de competidores y genera CSV.
+    
+    Args:
+        competitor_seller_ids: Seller IDs de competidores
+        output_csv: Ruta de salida del CSV
+        
+    Returns:
+        Path al CSV generado
+    """
+    setup_logging("INFO")
+    
+    from src.scrapers.orchestrator import ScraperOrchestrator
+    
+    log.info("scraper.competitors.start", count=len(competitor_seller_ids))
+    
+    sp_client = SPAPIClient()
+    keepa_client = KeepaClient()
+    redis = await aioredis.from_url(settings.redis_url)
+    
+    try:
+        orchestrator = ScraperOrchestrator(sp_client, keepa_client, redis)
+        
+        csv_path = await orchestrator.scrape_and_generate_csv(
+            competitor_asins=competitor_seller_ids,
+            output_path=output_csv,
+        )
+        
+        log.info("scraper.competitors.complete", csv_path=str(csv_path))
+        print(f"\n✓ CSV generado: {csv_path}")
+        
+        return csv_path
+    
+    finally:
+        await redis.close()
+
+
+async def run_full_discovery(
+    keywords: list[str],
+    competitor_ids: list[str],
+    output_csv: str | Path = "data/full_discovery.csv",
+) -> Path:
+    """
+    Discovery COMPLETO: Keywords + Competencia.
+    
+    Args:
+        keywords: Términos de búsqueda
+        competitor_ids: Seller IDs
+        output_csv: CSV de salida
+        
+    Returns:
+        Path al CSV
+    """
+    setup_logging("INFO")
+    
+    from src.scrapers.orchestrator import ScraperOrchestrator
+    
+    log.info(
+        "scraper.full_discovery.start",
+        keywords=len(keywords),
+        competitors=len(competitor_ids),
+    )
+    
+    sp_client = SPAPIClient()
+    keepa_client = KeepaClient()
+    redis = await aioredis.from_url(settings.redis_url)
+    
+    try:
+        orchestrator = ScraperOrchestrator(sp_client, keepa_client, redis)
+        
+        csv_path = await orchestrator.scrape_and_generate_csv(
+            keywords=keywords,
+            competitor_asins=competitor_ids,
+            output_path=output_csv,
+            max_results=300,
+        )
+        
+        log.info("scraper.full_discovery.complete", csv_path=str(csv_path))
+        print(f"\n✓ CSV generado (discovery completo): {csv_path}")
+        
+        return csv_path
+    
+    finally:
+        await redis.close()
+
+
+async def run_monitoring(
+    watchlist_asins: list[str],
+    check_interval_minutes: int = 60,
+    duration_hours: int = 24,
+) -> None:
+    """
+    Inicia monitoreo continuo de precios/BSR.
+    
+    Args:
+        watchlist_asins: ASINs a monitorear
+        check_interval_minutes: Intervalo entre chequeos
+        duration_hours: Horas a ejecutar (0 = indefinido)
+        
+    Uso:
+        await run_monitoring(
+            watchlist_asins=["B07XYZ123", "B08ABC456"],
+            check_interval_minutes=30,
+            duration_hours=24  # monitorear por 24 horas
+        )
+    """
+    setup_logging("INFO")
+    
+    from src.scrapers.orchestrator import ScraperOrchestrator
+    
+    log.info(
+        "scraper.monitoring.start",
+        count=len(watchlist_asins),
+        interval=check_interval_minutes,
+    )
+    
+    sp_client = SPAPIClient()
+    keepa_client = KeepaClient()
+    redis = await aioredis.from_url(settings.redis_url)
+    
+    try:
+        orchestrator = ScraperOrchestrator(sp_client, keepa_client, redis)
+        
+        # Crear tarea de monitoreo
+        monitor_task = asyncio.create_task(
+            orchestrator.start_monitoring(
+                watchlist_asins=watchlist_asins,
+                check_interval_minutes=check_interval_minutes,
+            )
+        )
+        
+        # Si duration_hours > 0, ejecutar por ese tiempo
+        if duration_hours > 0:
+            try:
+                await asyncio.wait_for(
+                    monitor_task,
+                    timeout=duration_hours * 3600,
+                )
+            except asyncio.TimeoutError:
+                log.info("scraper.monitoring.timeout", hours=duration_hours)
+                monitor_task.cancel()
+                print(f"\n✓ Monitoreo completado después de {duration_hours} horas")
+        else:
+            # Indefinido
+            await monitor_task
+    
+    except KeyboardInterrupt:
+        print("\n✓ Monitoreo detenido por usuario")
+    finally:
+        await redis.close()
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Autonomous Mode — 24/7 Crawling + Analysis
+# ══════════════════════════════════════════════════════════════════
+
+async def run_autonomous_mode(
+    duration_hours: int = 24,
+    send_telegram_alerts: bool = True,
+) -> None:
+    """
+    Modo autónomo: Crawlea Amazon.es 24/7 sin intervención manual
+    
+    Proceso:
+    1. Crawler busca en Amazon.es (bestsellers, new releases, trending)
+    2. Pipeline analiza cada producto (escudos + ROI)
+    3. Competitive Analyzer valida viabilidad
+    4. Alertas Telegram con recomendaciones
+    5. Repite continuamente
+    
+    Args:
+        duration_hours: Cuantas horas correr (0 = indefinido)
+        send_telegram_alerts: Enviar alertas a Telegram
+        
+    Uso:
+        # Correr por 24 horas
+        await run_autonomous_mode(duration_hours=24)
+        
+        # Correr indefinido
+        await run_autonomous_mode(duration_hours=0)
+    """
+    setup_logging("INFO")
+    
+    log.info(
+        "autonomous_mode.start",
+        duration_hours=duration_hours,
+        telegram_alerts=send_telegram_alerts,
+    )
+    
+    # Setup clients
+    sp_client = SPAPIClient()
+    keepa_client = KeepaClient()
+    redis = await aioredis.from_url(settings.redis_url)
+    
+    # Setup pipeline
+    resolver = EANResolver(sp_client)
+    shield_chain = ShieldChain(keepa_client=keepa_client, sp_api_client=sp_client)
+    calculator = FinancialCalculator()
+    exporter = Exporter()
+    
+    # Setup crawler
+    crawler = AutonomousCrawler(
+        sp_client=sp_client,
+        keepa_client=keepa_client,
+        pipeline=None,
+        telegram_client=None,
+    )
+    
+    # Setup analyzer
+    analyzer = CompetitiveAnalyzer(
+        keepa_client=keepa_client,
+        sp_api_client=sp_client,
+    )
+    
+    try:
+        # Iniciar crawling autónomo
+        await crawler.start_autonomous_crawl(
+            duration_hours=duration_hours,
+            send_alerts=send_telegram_alerts,
+        )
+        
+        log.info("autonomous_mode.complete")
+        print("\n✓ Modo autónomo completado")
+        
+    finally:
+        await redis.close()
+        await exporter.teardown()
     main()
