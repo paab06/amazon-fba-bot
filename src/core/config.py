@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     google_sheets_id: str              = Field("")
     google_credentials_json_path: str  = Field("credentials/google_service_account.json")
 
+    # ── Base44 Webhook ────────────────────────────────────────────
+    base44_webhook_url: str | None     = Field(None, description="URL del webhook de Base44")
+    bot_webhook_token: str | None      = Field(None, description="Token de autenticación para el webhook")
+
 
 # Singleton — importar desde aquí en todos los módulos
 settings = Settings()

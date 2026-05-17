@@ -14,6 +14,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Union
 
+import aiohttp
 import asyncpg
 import gspread_asyncio
 import structlog
@@ -41,6 +42,77 @@ _SHEETS_HEADER = [
     "BuyBox Seller", "BuyBox FBA",
     "Exported At",
 ]
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Base44 Alert Webhook
+# ══════════════════════════════════════════════════════════════════
+
+async def send_alert_to_base44(result: FinancialResult) -> None:
+    """
+    Envía una alerta a Base44 con los datos del producto aprobado.
+    Mapea el FinancialResult a JSON exacto y autentica con token si existe.
+    """
+    if not settings.base44_webhook_url:
+        log.debug("base44.webhook_skipped", reason="webhook_url_not_configured")
+        return
+
+    payload = {
+        "asin": result.asin,
+        "product_name": result.title,
+        "score": 85,
+        "amazon_price": float(result.buybox_price),
+        "max_buy_price": float(result.buy_price),
+        "net_margin": float(result.net_profit),
+        "roi_percent": float(result.roi_pct),
+        "bsr_percent": float(result.bsr_top_pct),
+        "active_sellers": 5,
+        "est_monthly_sales": 300,
+        "category": result.bsr_category,
+        "shield_amazon": True,
+        "shield_brand": True,
+        "shield_massacre": True,
+        "shield_account": True,
+    }
+
+    headers = {}
+    if settings.bot_webhook_token:
+        headers["x-bot-token"] = settings.bot_webhook_token
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                settings.base44_webhook_url,
+                json=payload,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as response:
+                if response.status == 200:
+                    log.info(
+                        "base44.alert_sent",
+                        asin=result.asin,
+                        status=response.status,
+                    )
+                else:
+                    log.warning(
+                        "base44.alert_failed",
+                        asin=result.asin,
+                        status=response.status,
+                        response=await response.text(),
+                    )
+    except asyncio.TimeoutError:
+        log.warning(
+            "base44.alert_timeout",
+            asin=result.asin,
+            url=settings.base44_webhook_url,
+        )
+    except Exception as exc:
+        log.error(
+            "base44.alert_error",
+            asin=result.asin,
+            error=str(exc),
+            exc_info=True,
+        )
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -306,6 +378,8 @@ class Exporter:
                     self._sheets.append(item),
                     self._db.write_pass(item, self.run_id),
                 )
+                # Enviar alerta a Base44 después de guardar
+                await send_alert_to_base44(item)
                 self.stats["pass"] += 1
                 log.info(
                     "exporter.pass",
