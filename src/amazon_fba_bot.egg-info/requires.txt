@@ -2,6 +2,7 @@ aiohttp>=3.9
 aiofiles>=23.0
 aioredis>=2.0
 asyncpg>=0.29
+click>=8.0
 gspread-asyncio>=1.9
 google-auth>=2.0
 pydantic-settings>=2.0

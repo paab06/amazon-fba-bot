@@ -6,6 +6,7 @@ Requires-Dist: aiohttp>=3.9
 Requires-Dist: aiofiles>=23.0
 Requires-Dist: aioredis>=2.0
 Requires-Dist: asyncpg>=0.29
+Requires-Dist: click>=8.0
 Requires-Dist: gspread-asyncio>=1.9
 Requires-Dist: google-auth>=2.0
 Requires-Dist: pydantic-settings>=2.0
