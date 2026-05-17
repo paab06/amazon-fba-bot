@@ -92,6 +92,39 @@ class ScraperOrchestrator:
         ):
             yield product
 
+    async def find_arbitrage_opportunities(self) -> list[str]:
+        """
+        Genera un conjunto de filtros rentables y consulta Keepa Product Finder.
+
+        Devuelve una lista de ASINs que cumplen con los criterios de arbitraje.
+        """
+        selection_json = {
+            "salesRank": {"max": 40000},
+            "buyBoxPrice": {"min": 1500},
+            "amazonStock": {"max": 0},
+            "condition": "new",
+            "pageSize": 10000,
+        }
+
+        log.info(
+            "scraper_orchestrator.find_arbitrage_opportunities",
+            filters=selection_json,
+        )
+
+        try:
+            asins = await self._keepa.product_finder_query(selection_json)
+            log.info(
+                "scraper_orchestrator.arbitrage_opportunities_found",
+                asin_count=len(asins),
+            )
+            return asins
+        except Exception as exc:
+            log.error(
+                "scraper_orchestrator.arbitrage_query_failed",
+                error=str(exc),
+            )
+            return []
+
     async def scrape_and_generate_csv(
         self,
         keywords: list[str] | None = None,

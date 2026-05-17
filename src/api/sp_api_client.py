@@ -430,3 +430,47 @@ class SPAPIClient:
                 "includedData": "identifiers,summaries,salesRanks",
             },
         )
+
+    async def search_catalog_by_asin(self, asin: str) -> dict:
+        """
+        Catalog Items API v2022 — resuelve ASIN → detalles del producto.
+        """
+        return await self._request(
+            "GET",
+            "/catalog/2022-04-01/items",
+            operation="searchCatalogItems",
+            params={
+                "identifiers": asin,
+                "identifiersType": "ASIN",
+                "marketplaceIds": self.MARKETPLACE_ID,
+                "includedData": "identifiers,summaries,salesRanks",
+            },
+        )
+
+    async def get_ean_from_asin(self, asin: str) -> tuple[str, str]:
+        """
+        Resuelve un ASIN a su EAN y título principal.
+
+        Returns:
+            (ean, title)
+        """
+        raw = await self.search_catalog_by_asin(asin)
+        items = raw.get("items", [])
+        if not items:
+            raise SPAPINotFoundError(f"ASIN no encontrado: {asin}")
+
+        item = items[0]
+        identifiers = item.get("identifiers", {})
+        raw_ean = identifiers.get("ean") or identifiers.get("EAN")
+        if isinstance(raw_ean, list):
+            raw_ean = raw_ean[0] if raw_ean else ""
+
+        if not raw_ean:
+            raise SPAPINotFoundError(f"No se encontró EAN para ASIN: {asin}")
+
+        title = ""
+        summaries = item.get("summaries", [])
+        if summaries and isinstance(summaries, list):
+            title = summaries[0].get("itemName", "") or ""
+
+        return str(raw_ean), title

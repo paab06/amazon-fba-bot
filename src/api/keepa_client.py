@@ -10,6 +10,7 @@ from __future__ import annotations
 import aiohttp
 import structlog
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+from typing import Any, Dict, List
 
 from src.core.config import settings
 from src.core.exceptions import KeepaAPIError
@@ -93,6 +94,52 @@ class KeepaClient:
             for ts, count in zip(it, it)
             if count != -1   # -1 = sin dato en Keepa
         ]
+
+    @retry(
+        retry=retry_if_exception_type(KeepaAPIError),
+        wait=wait_exponential(multiplier=2, min=4, max=30),
+        stop=stop_after_attempt(3),
+        reraise=True,
+    )
+    async def product_finder_query(
+        self,
+        selection_json: Dict[str, Any],
+    ) -> List[str]:
+        """
+        Consulta Keepa Product Finder (/query) y devuelve una lista de ASINs.
+
+        Args:
+            selection_json: JSON de filtros para Keepa Product Finder.
+
+        Returns:
+            Lista de ASINs candidatos.
+        """
+        assert self._session, "Usar como context manager"
+
+        url = f"{_KEEPA_BASE}/query?key={self._key}&domain=3"
+
+        try:
+            async with self._session.post(
+                url,
+                json=selection_json,
+                timeout=aiohttp.ClientTimeout(total=60),
+            ) as resp:
+                if resp.status == 429:
+                    raise KeepaAPIError("Keepa rate limit — reintentando")
+                if resp.status != 200:
+                    raise KeepaAPIError(
+                        f"Keepa query error [{resp.status}]: {await resp.text()}"
+                    )
+                data = await resp.json()
+        except aiohttp.ClientError as exc:
+            raise KeepaAPIError(f"Keepa query failed: {exc}") from exc
+
+        asin_list = data.get("asinList")
+        if asin_list and isinstance(asin_list, list):
+            return [str(asin) for asin in asin_list if asin]
+
+        products: list[dict] = data.get("products", [])
+        return [str(product.get("asin")) for product in products if product.get("asin")]
 
     @retry(
         retry=retry_if_exception_type(KeepaAPIError),
