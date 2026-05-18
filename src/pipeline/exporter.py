@@ -3,8 +3,8 @@
 Exporter — Módulo 5a
 
 Responsabilidades:
-  - Exportar FinancialResult a Google Sheets en batches
   - Persistir todos los resultados (pass y drop) en PostgreSQL
+  - Enviar alertas a Base44 para productos aprobados
   - Nunca bloquear el pipeline: consume de una asyncio.Queue
   - Reintentar escrituras fallidas con backoff exponencial
 """
@@ -16,9 +16,7 @@ from typing import Union
 
 import aiohttp
 import asyncpg
-import gspread_asyncio
 import structlog
-from google.oauth2.service_account import Credentials
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.core.config import settings
@@ -28,21 +26,6 @@ log = structlog.get_logger(__name__)
 
 # Sentinel para señalar fin de cola
 _QUEUE_DONE = None
-
-# Batch size para escrituras en Sheets
-_SHEETS_BATCH_SIZE = 50
-
-# Cabecera del Google Sheet
-_SHEETS_HEADER = [
-    "ASIN", "EAN", "Title", "Brand",
-    "Buy Price (€)", "BuyBox Price (€)",
-    "FBA Fee (€)", "Referral Fee (€)", "Prep/Ship (€)",
-    "Net Profit (€)", "ROI (%)",
-    "BSR Rank", "BSR Category", "BSR Top %",
-    "BuyBox Seller", "BuyBox FBA",
-    "Exported At",
-]
-
 
 # ══════════════════════════════════════════════════════════════════
 #  Base44 Alert Webhook
@@ -113,100 +96,6 @@ async def send_alert_to_base44(result: FinancialResult) -> None:
             error=str(exc),
             exc_info=True,
         )
-
-
-# ══════════════════════════════════════════════════════════════════
-#  Google Sheets writer
-# ══════════════════════════════════════════════════════════════════
-
-class SheetsWriter:
-    """
-    Escribe FinancialResult en Google Sheets en batches.
-    Usa gspread_asyncio para operaciones no bloqueantes.
-    """
-
-    def __init__(self) -> None:
-        self._agcm: gspread_asyncio.AsyncioGspreadClientManager | None = None
-        self._worksheet = None
-        self._pending: list[list] = []
-
-    async def setup(self) -> None:
-        """Inicializa la conexión y asegura que existe la cabecera."""
-        def _get_credentials():
-            scopes = [
-                "https://spreadsheets.google.com/feeds",
-                "https://www.googleapis.com/auth/drive",
-            ]
-            return Credentials.from_service_account_file(
-                settings.google_credentials_json_path,
-                scopes=scopes,
-            )
-
-        self._agcm = gspread_asyncio.AsyncioGspreadClientManager(
-            _get_credentials
-        )
-        agc = await self._agcm.authorize()
-        spreadsheet = await agc.open_by_key(settings.google_sheets_id)
-
-        # Usar primera hoja o crearla si no existe
-        try:
-            self._worksheet = await spreadsheet.get_worksheet(0)
-        except Exception:
-            self._worksheet = await spreadsheet.add_worksheet(
-                title="FBA Results", rows=10000, cols=len(_SHEETS_HEADER)
-            )
-
-        # Escribir cabecera si la hoja está vacía
-        all_values = await self._worksheet.get_all_values()
-        if not all_values:
-            await self._worksheet.append_row(
-                _SHEETS_HEADER, value_input_option="RAW"
-            )
-            log.info("sheets.header_written")
-
-    async def append(self, result: FinancialResult) -> None:
-        """Añade una fila al buffer pendiente."""
-        row = [
-            result.asin,
-            result.ean,
-            result.title[:100],          # truncar títulos largos
-            result.brand,
-            result.buy_price,
-            result.buybox_price,
-            result.fees.fba_fee,
-            result.fees.referral_fee,
-            result.fees.prep_shipping,
-            result.net_profit,
-            result.roi_pct,
-            result.bsr_rank,
-            result.bsr_category,
-            result.bsr_top_pct,
-            result.buybox_seller_name,
-            "Sí" if result.buybox_is_fba else "No",
-            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-        ]
-        self._pending.append(row)
-
-        if len(self._pending) >= _SHEETS_BATCH_SIZE:
-            await self.flush()
-
-    @retry(
-        wait=wait_exponential(multiplier=2, min=4, max=60),
-        stop=stop_after_attempt(4),
-        reraise=True,
-    )
-    async def flush(self) -> None:
-        """Escribe el buffer pendiente en Sheets y lo vacía."""
-        if not self._pending or self._worksheet is None:
-            return
-
-        batch = self._pending.copy()
-        self._pending.clear()
-
-        await self._worksheet.append_rows(
-            batch, value_input_option="USER_ENTERED"
-        )
-        log.info("sheets.flushed", rows=len(batch))
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -336,15 +225,11 @@ class Exporter:
 
     def __init__(self, run_id: str) -> None:
         self.run_id = run_id
-        self._sheets = SheetsWriter()
         self._db = DatabaseWriter()
         self.stats = {"pass": 0, "drop": 0, "errors": 0}
 
     async def setup(self) -> None:
-        await asyncio.gather(
-            self._sheets.setup(),
-            self._db.setup(),
-        )
+        await self._db.setup()
         log.info("exporter.ready", run_id=self.run_id)
 
     async def consume(
@@ -365,19 +250,13 @@ class Exporter:
             await self._process(item)
             queue.task_done()
 
-        # Flush final de cualquier batch pendiente en Sheets
-        await self._sheets.flush()
-
     async def _process(
         self,
         item: Union[FinancialResult, FinancialDropReason, dict],
     ) -> None:
         try:
             if isinstance(item, FinancialResult):
-                await asyncio.gather(
-                    self._sheets.append(item),
-                    self._db.write_pass(item, self.run_id),
-                )
+                await self._db.write_pass(item, self.run_id)
                 # Enviar alerta a Base44 después de guardar
                 await send_alert_to_base44(item)
                 self.stats["pass"] += 1

@@ -44,10 +44,6 @@ class Settings(BaseSettings):
     prep_shipping_fixed: float = Field(0.50)
     pipeline_concurrency: int  = Field(10, description="Workers simultáneos")
 
-    # ── Google Sheets ──────────────────────────────────────────────
-    google_sheets_id: str              = Field("")
-    google_credentials_json_path: str  = Field("credentials/google_service_account.json")
-
     # ── Base44 Webhook ────────────────────────────────────────────
     base44_webhook_url: str | None     = Field(None, description="URL del webhook de Base44")
     bot_webhook_token: str | None      = Field(None, description="Token de autenticación para el webhook")
