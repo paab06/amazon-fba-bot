@@ -1,15 +1,29 @@
 """
 Monitor de Tiendas — Script asíncrono autónomo
 
-Scrape de múltiples URLs de liquidaciones/outlets para extraer EANs y precios
-de oferta. Consolida los datos, escribe en data/input_sample.csv e invoca
-automáticamente el pipeline principal.
+Scrape de 10 tiendas españolas líderes en Arbitraje Online (OA) para extraer
+EANs y precios de oferta. Usa arquitectura de enrutador con selectores HTML
+específicos por tienda.
+
+Tiendas monitoreadas:
+  1. Carrefour          - Outlet y ofertas diarias
+  2. El Corte Inglés    - Liquidaciones activas
+  3. FNAC               - Zona outlet
+  4. MediaMarkt         - Campaign outlet
+  5. Juguettos          - Colección ofertas
+  6. Worten             - Outlet permanente
+  7. PCComponentes      - Ofertas especiales
+  8. Toys R Us          - Ofertas
+  9. Alcampo            - Compra online ofertas
+  10. Miravia           - Flash ofertas
 
 Características:
   - Scraping asíncrono con httpx
+  - Enrutador de selectores HTML por dominio
   - Extracción de EAN (13 dígitos) y precios limpios
   - Manejo de excepciones por URL (continúa si una falla)
   - Auto-invocación del pipeline (src/main.py)
+  - Deduplicación de productos por EAN
 """
 from __future__ import annotations
 
@@ -29,16 +43,20 @@ from bs4 import BeautifulSoup
 log = structlog.get_logger(__name__)
 
 # ════════════════════════════════════════════════════════════════════
-#  URLs Mutable — Tiendas de Liquidaciones/Outlets
+#  URLs Mutable — 10 Tiendas Españolas Arbitraje Online
 # ════════════════════════════════════════════════════════════════════
 
 MONITOR_URLS: list[str] = [
-    # Prueba 1: Carrefour outlet (España)
     "https://www.carrefour.es/supermercado/ofertas",
-    # Prueba 2: El Corte Inglés liquidaciones
     "https://www.elcorteingles.es/bazar/liquidacion/",
-    # Prueba 3: Amazon Warehouse Deals
-    "https://www.amazon.es/s?k=warehouse+deals&i=warehouse-deals",
+    "https://www.fnac.es/zona-outlet/s",
+    "https://www.mediamarkt.es/es/campaign/outlet",
+    "https://juguettos.com/collections/ofertas",
+    "https://www.worten.es/outlet",
+    "https://www.pccomponentes.com/ofertas-especiales",
+    "https://www.toysrus.es/ofertas",
+    "https://www.alcampo.es/compra-online/ofertas",
+    "https://www.miravia.es/ofertas-flash/",
 ]
 
 # ════════════════════════════════════════════════════════════════════
@@ -71,9 +89,113 @@ def clean_price(raw_price: str) -> Optional[float]:
 # ════════════════════════════════════════════════════════════════════
 
 
+def _get_store_config(url: str) -> dict:
+    """Retorna selectores HTML específicos según el dominio de la tienda."""
+    domain = url.lower()
+
+    # Carrefour
+    if "carrefour.es" in domain:
+        return {
+            "store": "Carrefour",
+            "product_container": "product-item",
+            "ean_selector": "data-ean",
+            "price_class": "productprice",
+        }
+
+    # El Corte Inglés
+    elif "elcorteingles.es" in domain:
+        return {
+            "store": "El Corte Inglés",
+            "product_container": "product-card",
+            "ean_selector": "data-id",
+            "price_class": "salePrice",
+        }
+
+    # FNAC
+    elif "fnac.es" in domain:
+        return {
+            "store": "FNAC",
+            "product_container": "catalog-item",
+            "ean_selector": "data-ean",
+            "price_class": "promo-price",
+        }
+
+    # MediaMarkt
+    elif "mediamarkt.es" in domain:
+        return {
+            "store": "MediaMarkt",
+            "product_container": "product-box",
+            "ean_selector": "data-product-id",
+            "price_class": "price-tag",
+        }
+
+    # Juguettos
+    elif "juguettos.com" in domain:
+        return {
+            "store": "Juguettos",
+            "product_container": "product",
+            "ean_selector": "data-ean",
+            "price_class": "sale-price",
+        }
+
+    # Worten
+    elif "worten.es" in domain:
+        return {
+            "store": "Worten",
+            "product_container": "product-card",
+            "ean_selector": "data-id",
+            "price_class": "current-price",
+        }
+
+    # PCComponentes
+    elif "pccomponentes.com" in domain:
+        return {
+            "store": "PCComponentes",
+            "product_container": "product-box",
+            "ean_selector": "data-sku",
+            "price_class": "offer-price",
+        }
+
+    # Toys R Us
+    elif "toysrus.es" in domain:
+        return {
+            "store": "Toys R Us",
+            "product_container": "product-item",
+            "ean_selector": "data-ean",
+            "price_class": "discounted-price",
+        }
+
+    # Alcampo
+    elif "alcampo.es" in domain:
+        return {
+            "store": "Alcampo",
+            "product_container": "product",
+            "ean_selector": "data-id",
+            "price_class": "current-price",
+        }
+
+    # Miravia
+    elif "miravia.es" in domain:
+        return {
+            "store": "Miravia",
+            "product_container": "product-card",
+            "ean_selector": "data-ean",
+            "price_class": "price",
+        }
+
+    # Fallback genérico
+    else:
+        return {
+            "store": "Unknown",
+            "product_container": "product",
+            "ean_selector": "data-ean",
+            "price_class": "price",
+        }
+
+
 async def scrape_url(client: httpx.AsyncClient, url: str) -> list[dict]:
     """
-    Scrape una URL individual.
+    Scrape una URL individual con selectores específicos por tienda.
 
     Retorna lista de dicts: [{"ean": "...", "buy_price": 12.50}, ...]
     """
@@ -85,43 +207,51 @@ async def scrape_url(client: httpx.AsyncClient, url: str) -> list[dict]:
         response.raise_for_status()
 
         soup = BeautifulSoup(response.text, "html.parser")
+        config = _get_store_config(url)
+        store_name = config["store"]
 
-        # Búsqueda genérica de EAN y precios en atributos comunes
-        # (En realidad, necesitarías adaptar estos selectores a cada tienda)
-        product_items = soup.find_all(
-            class_=re.compile(r"product|item|offer", re.IGNORECASE)
-        )
+        log.info("Usando configuración de tienda", store=store_name, url=url)
+
+        # Busca contenedores de producto específicos
+        product_items = soup.find_all(class_=re.compile(config["product_container"], re.IGNORECASE))
 
         for item in product_items:
-            # Busca patrón de EAN en atributos o contenido
-            ean_elem = item.find(attrs={"data-ean": True})
-            if not ean_elem:
-                # Intenta en el texto
+            # Extrae EAN según el tipo de selector
+            raw_ean = None
+            if config["ean_selector"].startswith("data-"):
+                # Atributo data-*
+                attr_name = config["ean_selector"]
+                ean_elem = item.find(attrs={attr_name: True})
+                if ean_elem:
+                    raw_ean = ean_elem.get(attr_name, "")
+            else:
+                # Fallback: búsqueda en contenido de texto
                 item_text = item.get_text()
                 ean_match = re.search(r"\b(\d{12,14})\b", item_text)
                 if ean_match:
                     raw_ean = ean_match.group(1)
-                else:
-                    continue
-            else:
-                raw_ean = ean_elem.get("data-ean", "")
+
+            if not raw_ean:
+                continue
 
             clean_ean_val = clean_ean(raw_ean)
             if not clean_ean_val:
                 continue
 
-            # Busca precio
-            price_elem = item.find(class_=re.compile(r"price|offer-price", re.IGNORECASE))
-            if not price_elem:
-                # Intenta en el texto
-                price_text = item.get_text()
-                price_match = re.search(r"(?:€|\$|£)?\s*(\d+[,\.]\d{2})", price_text)
+            # Extrae precio
+            price_elem = item.find(class_=re.compile(config["price_class"], re.IGNORECASE))
+            raw_price = None
+            if price_elem:
+                raw_price = price_elem.get_text()
+            else:
+                # Intenta encontrar precio en el texto del item
+                item_text = item.get_text()
+                price_match = re.search(r"(?:€|\$|£)?\s*(\d+[,\.]\d{2})", item_text)
                 if price_match:
                     raw_price = price_match.group(0)
-                else:
-                    continue
-            else:
-                raw_price = price_elem.get_text()
+
+            if not raw_price:
+                continue
 
             clean_price_val = clean_price(raw_price)
             if clean_price_val is None:
@@ -134,10 +264,10 @@ async def scrape_url(client: httpx.AsyncClient, url: str) -> list[dict]:
                 }
             )
 
-        log.info("Productos extraídos", url=url, count=len(products))
+        log.info("Productos extraídos", store=store_name, url=url, count=len(products))
 
     except httpx.HTTPError as e:
-        log.error("Error HTTP al scrapeando URL", url=url, error=str(e))
+        log.error("Error HTTP al scrapear URL", url=url, error=str(e))
     except Exception as e:
         log.error("Error inesperado al scrapear URL", url=url, error=str(e))
 
