@@ -75,6 +75,54 @@ def generate_mock_bsr() -> int:
     return random.randint(500, 50000)
 
 
+def _ean13_from_12(base_12: str) -> str:
+    """Completa dígito de control EAN-13 (12 primeros dígitos numéricos)."""
+    rev = base_12[::-1]
+    total = sum(int(rev[i]) * (3 if i % 2 == 0 else 1) for i in range(12))
+    check = (10 - (total % 10)) % 10
+    return base_12 + str(check)
+
+
+def fallback_mock_tienda_products() -> list[dict]:
+    """
+    Productos ficticios con el mismo shape que el monitor de tiendas.
+    Útil cuando el scrape devuelve 403/0 resultados (anti-bot) o para pruebas offline.
+    EANs de 13 dígitos válidos; precios tipo outlet.
+    """
+    return [
+        {
+            "ean": "5901234123457",
+            "buy_price": 12.90,
+            "store": "Carrefour",
+            "title": "Pack snacks surtido (simulado monitor)",
+        },
+        {
+            "ean": "4006381333931",
+            "buy_price": 24.50,
+            "store": "El Corte Inglés",
+            "title": "Accesorio hogar liquidación (simulado)",
+        },
+        {
+            "ean": _ean13_from_12("303792016135"),
+            "buy_price": 8.99,
+            "store": "FNAC",
+            "title": "Consumible outlet (simulado)",
+        },
+        {
+            "ean": _ean13_from_12("841234567890"),
+            "buy_price": 45.00,
+            "store": "MediaMarkt",
+            "title": "Gadget tech outlet (simulado)",
+        },
+        {
+            "ean": _ean13_from_12("841000000001"),
+            "buy_price": 6.49,
+            "store": "Worten",
+            "title": "Cable / periférico (simulado)",
+        },
+    ]
+
+
 # ════════════════════════════════════════════════════════════════════
 #  Scrape + Mock + Financial Calc
 # ════════════════════════════════════════════════════════════════════
@@ -129,8 +177,8 @@ def enrich_with_mock_amazon(
                 "amazon_price": amazon_price,
                 "bsr": bsr,
                 "category": category,
-                "title": f"Producto {ean}",
-                "brand": "Test Brand",
+                "title": product.get("title") or f"Producto {ean}",
+                "brand": product.get("store") or "Test Brand",
             }
         )
 
@@ -289,10 +337,13 @@ async def main():
     tienda_products = await run_test_scrape(MONITOR_URLS, max_products=5)
 
     if not tienda_products:
-        log.error("❌ No se extrajeron productos. Abortando.")
-        return
-
-    log.info(f"✅ Extraídos {len(tienda_products)} productos reales")
+        log.warning(
+            "Sin productos del scrape (p. ej. 403 anti-bot); "
+            "usando filas simuladas de tiendas oficiales para la prueba Base44"
+        )
+        tienda_products = fallback_mock_tienda_products()
+    else:
+        log.info("Productos extraídos del scrape de tiendas", count=len(tienda_products))
 
     # 2. Enriquece con mock Amazon
     log.info("\n🤖 FASE 2: Generando precios ficticios de Amazon...")

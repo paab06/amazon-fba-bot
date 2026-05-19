@@ -8,12 +8,12 @@ def setup_logging(level: str = "INFO") -> None:
     Configura structlog para output JSON en producción
     y output legible (consola) en desarrollo.
     """
+    # PrintLoggerFactory no expone `.name`; no usar add_logger_name de stdlib aquí.
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
             structlog.processors.TimeStamper(fmt="iso"),
-            structlog.stdlib.add_log_level,
-            structlog.stdlib.add_logger_name,
+            structlog.processors.add_log_level,
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
             structlog.dev.ConsoleRenderer(),   # cambiar a JSONRenderer en prod

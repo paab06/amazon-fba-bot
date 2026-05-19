@@ -1,2 +1,2 @@
 [console_scripts]
-fba-bot = src.main:main
+fba-bot = src.cli:cli

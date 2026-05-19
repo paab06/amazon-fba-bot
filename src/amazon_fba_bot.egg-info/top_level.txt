@@ -1,6 +1,9 @@
 api
+cli
 core
+crawler_database
 db
 main
 pipeline
 scrapers
+telegram_bot
