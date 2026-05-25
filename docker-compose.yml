@@ -8,11 +8,58 @@ services:
       POSTGRES_PASSWORD: secret
     ports: ["5432:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fba"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: public.ecr.aws/docker/library/redis:7-alpine
     ports: ["6379:6379"]
     command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  fba-scheduler:
+    build: .
+    container_name: fba-bot-scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Base de datos
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: fba_bot
+      POSTGRES_USER: fba
+      POSTGRES_PASSWORD: secret
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      # APIs (obtener desde .env)
+      KEEPA_API_KEY: ${KEEPA_API_KEY:-your_keepa_key}
+      SP_API_KEY: ${SP_API_KEY:-your_sp_key}
+      SP_API_SECRET: ${SP_API_SECRET:-your_sp_secret}
+      SP_API_ROLE: ${SP_API_ROLE:-your_role_arn}
+      # Telegram
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-your_token}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-your_chat_id}
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - .:/app
+    working_dir: /app
+    restart: unless-stopped
+    command: python start_dual_flow.py --log-level INFO
+    # Para development, descomentar y cambiar a comando interactivo:
+    # stdin_open: true
+    # tty: true
 
 volumes:
   pgdata:

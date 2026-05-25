@@ -40,15 +40,19 @@ async def send_alert_to_base44(result: FinancialResult) -> None:
         log.debug("base44.webhook_skipped", reason="webhook_url_not_configured")
         return
 
+    # max_buy_price = mismo número que buy_price del pipeline (COGS / precio tienda).
+    # store_buy_price duplica el valor con nombre explícito por si Base44 enlaza otro label.
     payload = {
         "asin": result.asin,
+        "ean": result.ean,
         "product_name": result.title,
         "score": 85,
-        "amazon_price": float(result.buybox_price),
-        "max_buy_price": float(result.buy_price),
-        "net_margin": float(result.net_profit),
-        "roi_percent": float(result.roi_pct),
-        "bsr_percent": float(result.bsr_top_pct),
+        "amazon_price": round(float(result.buybox_price), 2),
+        "max_buy_price": round(float(result.buy_price), 2),
+        "store_buy_price": round(float(result.buy_price), 2),
+        "net_margin": round(float(result.net_profit), 2),
+        "roi_percent": round(float(result.roi_pct), 2),
+        "bsr_percent": round(float(result.bsr_top_pct), 2),
         "active_sellers": 5,
         "est_monthly_sales": 300,
         "category": result.bsr_category,

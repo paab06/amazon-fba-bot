@@ -7,6 +7,7 @@ dependencies = [
     "aiohttp>=3.9",
     "aiofiles>=23.0",
     "aioredis>=2.0",
+    "apscheduler>=3.10",
     "asyncpg>=0.29",
     "click>=8.0",
     "gspread-asyncio>=1.9",
